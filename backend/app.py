@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import requests
 import json
 import math
@@ -9,6 +10,12 @@ app = Flask(__name__)
 CORS(app)
 
 UW_OPEN_CLASSROOMS_URL = "https://portalapi2.uwaterloo.ca/v2/map/OpenClassrooms"
+TORONTO_TZ = ZoneInfo("America/Toronto")
+
+current_time = now_toronto().time()
+
+def now_toronto():
+    return datetime.now(TORONTO_TZ)
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
@@ -18,9 +25,8 @@ def haversine(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def weekday_name(dt=None):
-    dt = dt or datetime.now()
-    return dt.strftime("%A")  # matches UW API "Weekday" strings
+def weekday_name():
+    return now_toronto().strftime("%A")
 
 def get_today_slots(schedule_list, today):
     for entry in schedule_list or []:
@@ -74,7 +80,7 @@ def get_open_classrooms():
     r = requests.get(UW_OPEN_CLASSROOMS_URL, timeout=15)
     data = r.json()
 
-    now_dt = datetime.now()
+    now_dt = current_time
     current_time = now_dt.time()
     today = weekday_name(now_dt)
 
