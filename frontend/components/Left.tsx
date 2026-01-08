@@ -78,7 +78,8 @@ export default function Left({
     activeBuilding: string | null;
     setActiveBuilding: (building: string) => void;
 }) {
-    if (!data || data.length === 0) {
+    // ✅ avoid calling .length if data isn't actually an array
+    if (!Array.isArray(data) || data.length === 0) {
         return (
             <div className="px-8 my-2">
                 <Alert className="mx-auto w-fit text-center">
@@ -122,39 +123,51 @@ export default function Left({
                                 <div className="group-hover:underline underline-offset-8 pr-2">
                                     {building.building_code} - {building.building}
                                 </div>
-                                <div>
-                                    {statusLabel(building.building_status)}
-                                </div>
+                                <div>{statusLabel(building.building_status)}</div>
                             </div>
                         </AccordionTrigger>
 
                         <AccordionContent className="divide-y divide-dashed divide-zinc-600">
                             {building.rooms &&
                                 Object.entries(building.rooms).map(
-                                    ([roomNumber, room]) => (
-                                        <div
-                                            key={roomNumber}
-                                            className="flex justify-between py-4 text-lg font-[family-name:var(--font-geist-mono)] text-[16px]"
-                                        >
-                                            <div className="flex gap-4 items-center h-[fit-content]">
-                                                <div className="w-18">
-                                                    {building.building_code} {roomNumber}
-                                                </div>
-                                                <div className="relative">
-                                                    {statusIndicator(room.slots[0].Status)}
-                                                </div>
-                                            </div>
+                                    ([roomNumber, room]) => {
+                                        // ✅ guard against missing/empty slots
+                                        const slots = Array.isArray(room?.slots)
+                                            ? room.slots
+                                            : [];
+                                        const dotStatus =
+                                            slots?.[0]?.Status ?? "unavailable";
 
-                                            <ul className="text-right">
-                                                {room.slots.map((slot, index) => (
-                                                    <li key={index}>
-                                                        {formatTime(slot.StartTime)} -{" "}
-                                                        {formatTime(slot.EndTime)}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    )
+                                        return (
+                                            <div
+                                                key={roomNumber}
+                                                className="flex justify-between py-4 text-lg font-[family-name:var(--font-geist-mono)] text-[16px]"
+                                            >
+                                                <div className="flex gap-4 items-center h-[fit-content]">
+                                                    <div className="w-18">
+                                                        {building.building_code}{" "}
+                                                        {roomNumber}
+                                                    </div>
+                                                    <div className="relative">
+                                                        {statusIndicator(dotStatus)}
+                                                    </div>
+                                                </div>
+
+                                                <ul className="text-right">
+                                                    {slots.length === 0 ? (
+                                                        <li>—</li>
+                                                    ) : (
+                                                        slots.map((slot, index) => (
+                                                            <li key={index}>
+                                                                {formatTime(slot.StartTime)}{" "}
+                                                                - {formatTime(slot.EndTime)}
+                                                            </li>
+                                                        ))
+                                                    )}
+                                                </ul>
+                                            </div>
+                                        );
+                                    }
                                 )}
                         </AccordionContent>
                     </AccordionItem>
