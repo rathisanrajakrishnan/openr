@@ -1,10 +1,12 @@
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 from datetime import datetime
 import requests
 import json
 import math
 
 app = Flask(__name__)
+CORS(app)
 
 UW_OPEN_CLASSROOMS_URL = "https://portalapi2.uwaterloo.ca/v2/map/OpenClassrooms"
 
