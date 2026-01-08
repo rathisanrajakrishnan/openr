@@ -82,6 +82,15 @@ def get_slot_status(current_time: time, start_time_str: str, end_time_str: str, 
 def test():
     return jsonify({"message": "Test route is working!"})
 
+@app.route("/api/now", methods=["GET"])
+def now():
+    tor = now_toronto()
+    utc = datetime.utcnow()
+    return jsonify({
+        "toronto_iso": tor.isoformat(),
+        "toronto_weekday": tor.strftime("%A"),
+        "utc_iso": utc.isoformat() + "Z",
+    })
 
 @app.route("/api/open-classrooms", methods=["GET", "POST"])
 def get_open_classrooms():
