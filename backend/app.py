@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from datetime import datetime
+from datetime import datetime, date, time
 from zoneinfo import ZoneInfo
 import requests
 import json
@@ -12,31 +12,52 @@ CORS(app)
 UW_OPEN_CLASSROOMS_URL = "https://portalapi2.uwaterloo.ca/v2/map/OpenClassrooms"
 TORONTO_TZ = ZoneInfo("America/Toronto")
 
-current_time = now_toronto().time()
 
-def now_toronto():
+def now_toronto() -> datetime:
     return datetime.now(TORONTO_TZ)
+
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def weekday_name():
-    return now_toronto().strftime("%A")
 
-def get_today_slots(schedule_list, today):
+def weekday_name(dt: datetime) -> str:
+    # Matches UW API weekday strings e.g. "Wednesday"
+    return dt.strftime("%A")
+
+
+def get_today_slots(schedule_list, today: str):
+    """
+    schedule_list looks like:
+    [
+      {"Weekday":"Wednesday","Slots":[...]},
+      {"Weekday":"Thursday","Slots":[...]}
+    ]
+    We return the Slots for 'today' weekday (or [] if none).
+    """
     for entry in schedule_list or []:
         if entry.get("Weekday") == today:
             return entry.get("Slots", [])
     return []
 
-def get_slot_status(current_time, start_time_str, end_time_str):
-    start_time = datetime.strptime(start_time_str, "%H:%M:%S").time()
-    end_time = datetime.strptime(end_time_str, "%H:%M:%S").time()
+
+def parse_hms(hms: str) -> time:
+    return datetime.strptime(hms, "%H:%M:%S").time()
+
+
+def get_slot_status(current_time: time, start_time_str: str, end_time_str: str, today_date: date):
+    start_time = parse_hms(start_time_str)
+    end_time = parse_hms(end_time_str)
 
     # UW “24/7” convention: 00:00:00 → 00:00:00 means open all day
     if start_time == end_time:
@@ -44,8 +65,7 @@ def get_slot_status(current_time, start_time_str, end_time_str):
 
     # upcoming within 20 minutes
     minutes_until = (
-        datetime.combine(datetime.today(), start_time) -
-        datetime.combine(datetime.today(), current_time)
+        datetime.combine(today_date, start_time) - datetime.combine(today_date, current_time)
     ).total_seconds() / 60
 
     if 0 < minutes_until < 20:
@@ -57,9 +77,11 @@ def get_slot_status(current_time, start_time_str, end_time_str):
     else:
         return "unavailable"
 
+
 @app.route("/api/test", methods=["GET"])
 def test():
     return jsonify({"message": "Test route is working!"})
+
 
 @app.route("/api/open-classrooms", methods=["GET", "POST"])
 def get_open_classrooms():
@@ -77,12 +99,14 @@ def get_open_classrooms():
         if user_lat is None or user_lng is None:
             return jsonify({"error": "Invalid location data. 'lat' and 'lng' are required."}), 400
 
-    r = requests.get(UW_OPEN_CLASSROOMS_URL, timeout=15)
-    data = r.json()
-
-    now_dt = current_time
+    # Toronto "now"
+    now_dt = now_toronto()
     current_time = now_dt.time()
     today = weekday_name(now_dt)
+    today_date = now_dt.date()
+
+    r = requests.get(UW_OPEN_CLASSROOMS_URL, timeout=15)
+    data = r.json()
 
     building_info_list = []
 
@@ -96,21 +120,24 @@ def get_open_classrooms():
 
         # If UW provides no slot data, treat as unavailable (no "closed" state)
         if not open_slots_str:
-            building_info_list.append({
-                "building": building_name,
-                "building_code": building_code,
-                "building_status": "unavailable",
-                "rooms": {},
-                "coords": building_coords,
-                "distance": haversine(user_lat, user_lng, building_coords[1], building_coords[0])
-                            if user_lat and user_lng else 0
-            })
+            building_info_list.append(
+                {
+                    "building": building_name,
+                    "building_code": building_code,
+                    "building_status": "unavailable",
+                    "rooms": {},
+                    "coords": building_coords,
+                    "distance": haversine(user_lat, user_lng, building_coords[1], building_coords[0])
+                    if user_lat and user_lng
+                    else 0,
+                }
+            )
             continue
 
         open_classroom_slots = json.loads(open_slots_str)
         rooms = {}
 
-        # Only statuses you want: available / upcoming / unavailable
+        # Only statuses: available / upcoming / unavailable
         building_status = "unavailable"
 
         for room in open_classroom_slots.get("data", []):
@@ -127,54 +154,53 @@ def get_open_classrooms():
             slots_with_status = []
             saw_available = False
             saw_upcoming = False
-            saw_future_unavailable = False
+            saw_nonpassed = False
 
             for slot in slots:
-                start_time = slot["StartTime"]
-                end_time = slot["EndTime"]
-                status = get_slot_status(current_time, start_time, end_time)
+                start_time_str = slot["StartTime"]
+                end_time_str = slot["EndTime"]
+
+                status = get_slot_status(current_time, start_time_str, end_time_str, today_date)
 
                 if status == "available":
                     saw_available = True
                 elif status == "upcoming":
                     saw_upcoming = True
-                elif status == "unavailable":
-                    # means this slot is later today but not within 20 mins yet
-                    saw_future_unavailable = True
 
                 # Keep only non-passed slots for display
                 if status != "passed":
-                    slots_with_status.append({
-                        "StartTime": start_time,
-                        "EndTime": end_time,
-                        "Status": status
-                    })
+                    saw_nonpassed = True
+                    slots_with_status.append(
+                        {"StartTime": start_time_str, "EndTime": end_time_str, "Status": status}
+                    )
 
-            # If everything passed, show nothing (still unavailable)
-            rooms[room_number] = {"slots": slots_with_status}
+            # If everything passed, show [] (still unavailable)
+            rooms[room_number] = {"slots": slots_with_status if saw_nonpassed else []}
 
             # Building status priority: available > upcoming > unavailable
             if saw_available:
                 building_status = "available"
             elif saw_upcoming and building_status != "available":
                 building_status = "upcoming"
-            elif saw_future_unavailable and building_status not in ("available", "upcoming"):
-                building_status = "unavailable"
 
-        building_info_list.append({
-            "building": building_name,
-            "building_code": building_code,
-            "building_status": building_status,
-            "rooms": rooms,
-            "coords": building_coords,
-            "distance": haversine(user_lat, user_lng, building_coords[1], building_coords[0])
-                        if user_lat and user_lng else 0
-        })
+        building_info_list.append(
+            {
+                "building": building_name,
+                "building_code": building_code,
+                "building_status": building_status,
+                "rooms": rooms,
+                "coords": building_coords,
+                "distance": haversine(user_lat, user_lng, building_coords[1], building_coords[0])
+                if user_lat and user_lng
+                else 0,
+            }
+        )
 
     if user_lat and user_lng:
         building_info_list.sort(key=lambda x: x["distance"])
 
     return jsonify(building_info_list)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)
